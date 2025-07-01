@@ -1,5 +1,5 @@
 from FUNCTIONS import run_main_template_query
-from R_Script import R_ScriptRunIncentive, R_Script_4Week, RScript_ISoWeek
+from User_Prompt_Functions import R_ScriptRunIncentive, R_Script_4Week, RScript_ISoWeek
 
 if __name__ == "__main__":
     print("Which report would you like to run?")
