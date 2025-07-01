@@ -1,4 +1,4 @@
-from FUNCTIONS import run_main_template_query
+from Core_SQL_Connection_and_Query import run_main_template_query
 from User_Prompt_Functions import R_ScriptRunIncentive, R_Script_4Week, RScript_ISoWeek
 
 if __name__ == "__main__":
