@@ -90,7 +90,6 @@ def run_main_template_query(lower_date_str, upper_date_str):
     except Exception as e:
         append_output(f"❌ SQL ERROR: {e}")
 
-# --- R Script Runners ---
 def run_r_script(script_name, args=None):
     if args is None:
         args = []
@@ -105,14 +104,12 @@ def run_r_script(script_name, args=None):
     except Exception as e:
         append_output(f"❌ Subprocess error: {e}")
 
-# --- GUI Output ---
 def append_output(text):
     output_box.config(state="normal")
     output_box.insert(tk.END, text + "\n")
     output_box.see(tk.END)
     output_box.config(state="disabled")
 
-# --- Task Handler ---
 def run_task():
     task_type = main_choice_var.get()
     if task_type == "Provider Productivity File Pull":
@@ -134,26 +131,18 @@ def run_task():
             run_r_script("Run_4Week.R")
         elif script_choice == "ISO Week Workbook Only":
             run_r_script("Run_IsoWeek.R")
+        elif script_choice == "ISO Week bY PROVIDER":
+            run_r_script("ISO_Week_Split_By_Provider.R")
         else:
             messagebox.showwarning("Choose Option", "Select a script option.")
 
 def on_main_choice_change(*_):
     if main_choice_var.get() == "Provider Productivity File Pull":
-        lower_label.grid()
-        lower_entry.grid()
-        upper_label.grid()
-        upper_entry.grid()
-        sub_choice_label.grid_remove()
-        sub_choice_menu.grid_remove()
-        pay_period_label.grid_remove()
-        pay_period_entry.grid_remove()
+        frame_dates.grid()
+        frame_rfilter.grid_remove()
     else:
-        lower_label.grid_remove()
-        lower_entry.grid_remove()
-        upper_label.grid_remove()
-        upper_entry.grid_remove()
-        sub_choice_label.grid()
-        sub_choice_menu.grid()
+        frame_dates.grid_remove()
+        frame_rfilter.grid()
 
 def on_sub_choice_change(*_):
     if sub_choice_var.get() == "Incentive Calculation":
@@ -163,46 +152,74 @@ def on_sub_choice_change(*_):
         pay_period_label.grid_remove()
         pay_period_entry.grid_remove()
 
-# --- GUI Layout ---
+# --- GUI ---
 root = tk.Tk()
 root.title("📊 SBNC Productivity Tool")
-root.geometry("850x600")
+root.geometry("950x650")
+root.configure(bg="#f4f4f4")
+
+style = ttk.Style(root)
+style.theme_use("clam")
 
 main_choice_var = tk.StringVar()
 main_choice_var.trace_add("write", on_main_choice_change)
-main_menu = ttk.Combobox(root, textvariable=main_choice_var, state="readonly", width=50)
-main_menu['values'] = ["Provider Productivity File Pull", "Run R Filtering Sequence"]
-main_menu.current(0)
-
-tk.Label(root, text="Choose Task:").grid(row=0, column=0, padx=10, pady=10, sticky="w")
-main_menu.grid(row=0, column=1, padx=10, pady=10)
-
-lower_label = tk.Label(root, text="Lower Limit Date (YYYY-MM-DD):")
-lower_entry = tk.Entry(root, width=20)
-lower_label.grid(row=1, column=0, sticky="w", padx=10)
-lower_entry.grid(row=1, column=1, pady=5)
-
-upper_label = tk.Label(root, text="Upper Limit Date (Last Sunday, YYYY-MM-DD):")
-upper_entry = tk.Entry(root, width=20)
-upper_label.grid(row=2, column=0, sticky="w", padx=10)
-upper_entry.grid(row=2, column=1, pady=5)
 
 sub_choice_var = tk.StringVar()
 sub_choice_var.trace_add("write", on_sub_choice_change)
-sub_choice_label = tk.Label(root, text="Choose R Script:")
-sub_choice_menu = ttk.Combobox(root, textvariable=sub_choice_var, state="readonly", width=50)
-sub_choice_menu['values'] = ["Incentive Calculation", "4 Week Interval Workbook Only", "ISO Week Workbook Only"]
-sub_choice_label.grid_remove()
-sub_choice_menu.grid_remove()
 
-pay_period_label = tk.Label(root, text="Pay Period Start (YYYY-MM-DD):")
-pay_period_entry = tk.Entry(root, width=20)
-pay_period_label.grid_remove()
-pay_period_entry.grid_remove()
+# Task Selection Frame
+frame_top = ttk.LabelFrame(root, text="Select Task", padding=(15, 10))
+frame_top.grid(row=0, column=0, columnspan=2, padx=15, pady=10, sticky="ew")
 
-tk.Button(root, text="▶️ Run", command=run_task).grid(row=4, column=1, pady=10)
+ttk.Label(frame_top, text="Choose Task:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+main_menu = ttk.Combobox(frame_top, textvariable=main_choice_var, state="readonly", width=50)
+main_menu['values'] = ["Provider Productivity File Pull", "Run R Filtering Sequence"]
+main_menu.current(0)
+main_menu.grid(row=0, column=1, padx=5, pady=5, sticky="w")
 
-output_box = scrolledtext.ScrolledText(root, wrap=tk.WORD, width=100, height=20, state="disabled")
-output_box.grid(row=5, column=0, columnspan=2, padx=10, pady=10)
+# Date Entry Frame
+frame_dates = ttk.LabelFrame(root, text="Date Range", padding=(15, 10))
+frame_dates.grid(row=1, column=0, columnspan=2, padx=15, pady=5, sticky="ew")
+
+lower_label = ttk.Label(frame_dates, text="Lower Limit Date (YYYY-MM-DD):")
+lower_entry = ttk.Entry(frame_dates, width=20)
+lower_label.grid(row=0, column=0, sticky="w", padx=5, pady=5)
+lower_entry.grid(row=0, column=1, pady=5, sticky="w")
+
+upper_label = ttk.Label(frame_dates, text="Upper Limit Date (Last Sunday, YYYY-MM-DD):")
+upper_entry = ttk.Entry(frame_dates, width=20)
+upper_label.grid(row=1, column=0, sticky="w", padx=5, pady=5)
+upper_entry.grid(row=1, column=1, pady=5, sticky="w")
+
+# R Script Frame
+frame_rfilter = ttk.LabelFrame(root, text="R Filtering Options", padding=(15, 10))
+frame_rfilter.grid(row=2, column=0, columnspan=2, padx=15, pady=5, sticky="ew")
+
+sub_choice_label = ttk.Label(frame_rfilter, text="Choose R Script:")
+sub_choice_menu = ttk.Combobox(frame_rfilter, textvariable=sub_choice_var, state="readonly", width=50)
+sub_choice_label.grid(row=0, column=0, sticky="w", padx=5, pady=5)
+sub_choice_menu.grid(row=0, column=1, padx=5, pady=5)
+sub_choice_menu['values'] = ["Incentive Calculation", "4 Week Interval Workbook Only", "ISO Week Workbook Only", "ISO Week bY PROVIDER"]
+
+pay_period_label = ttk.Label(frame_rfilter, text="Pay Period Start (YYYY-MM-DD):")
+pay_period_entry = ttk.Entry(frame_rfilter, width=20)
+pay_period_label.grid(row=1, column=0, sticky="w", padx=5, pady=5)
+pay_period_entry.grid(row=1, column=1, padx=5, pady=5, sticky="w")
+
+# Run Button
+ttk.Button(root, text="▶️ Run Task", command=run_task).grid(row=3, column=1, pady=10, sticky="e", padx=15)
+
+# Output Frame
+output_frame = ttk.LabelFrame(root, text="Console Output", padding=(10, 10))
+output_frame.grid(row=4, column=0, columnspan=2, padx=15, pady=10, sticky="nsew")
+root.grid_rowconfigure(4, weight=1)
+root.grid_columnconfigure(1, weight=1)
+
+output_box = scrolledtext.ScrolledText(output_frame, wrap=tk.WORD, width=120, height=20, font=("Courier New", 10), state="disabled", bg="#fcfcfc", relief="solid", borderwidth=1)
+output_box.pack(fill="both", expand=True)
+
+# Initialize layout visibility
+on_main_choice_change()
+on_sub_choice_change()
 
 root.mainloop()
