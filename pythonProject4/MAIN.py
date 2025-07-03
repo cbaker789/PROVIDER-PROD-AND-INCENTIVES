@@ -1,5 +1,5 @@
 from Core_SQL_Connection_and_Query import run_main_template_query
-from R_Script_Subprocesses import R_ScriptRunIncentive, R_Script_4Week, RScript_ISoWeek
+from R_Script_Subprocesses import R_ScriptRunIncentive, R_Script_4Week, RScript_ISoWeek, RSCRIPT_ISoweek_By_Provider
 
 if __name__ == "__main__":
     print("Which report would you like to run?")
@@ -21,9 +21,10 @@ if __name__ == "__main__":
             print("1 = Run Incentive Calculation (Requires Pay Period Date)")
             print("2 = Run 4 Week Interval Workbook Only")
             print("3 = Run ISO Week Workbook Only")
+            print("4 = Run ISO Week By Provider")
             print("X = Exit back to main menu")
 
-            inner_choice = input("Enter 1, 2, 3, or X: ").strip().lower()
+            inner_choice = input("Enter 1, 2, 3, 4, or X: ").strip().lower()
 
             if inner_choice == "1":
                 R_ScriptRunIncentive()
@@ -31,6 +32,8 @@ if __name__ == "__main__":
                 R_Script_4Week()
             elif inner_choice == "3":
                 RScript_ISoWeek()
+            elif inner_choice == '4':
+                RSCRIPT_ISoweek_By_Provider()
             elif inner_choice == "x":
                 break
             else:
