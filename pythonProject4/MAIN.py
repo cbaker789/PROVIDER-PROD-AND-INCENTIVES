@@ -21,7 +21,7 @@ if __name__ == "__main__":
             print("1 = Run Incentive Calculation (Requires Pay Period Date)")
             print("2 = Run 4 Week Interval Workbook Only")
             print("3 = Run ISO Week Workbook Only")
-            print("4 = Run ISo Week By Provider")
+            print("4 = Run ISO Week By Provider")
             print("X = Exit back to main menu")
 
             inner_choice = input("Enter 1, 2, 3, 4, or X: ").strip().lower()
