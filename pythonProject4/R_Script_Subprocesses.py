@@ -60,6 +60,24 @@ def RScript_ISoWeek():
     print(f"🔚 Exit code: {result.returncode}")
 
 
+# --- Run Summary-Only R script without arguments ---
+def RSCRIPT_ISoweek_By_Provider():
+    r_exe = r"C:/Users/calvin.baker_SBNC/AppData/Local/Programs/R/R-4.3.2/bin/Rscript.exe"
+    r_script_path = r"\\SBNC-file1\users\calvin.baker_SBNC\Documents\R Scripts\Prov Prod\Auto_R_Filtering\ISO_Week_Split_By_Provider.R"
+
+    print("▶️ Running Summary-Only R script...")
+    result = subprocess.run(
+        [r_exe, r_script_path],
+        capture_output=True,
+        text=True
+    )
+
+    print("📤 STDOUT:\n", result.stdout or "[no output]")
+    print("❌ STDERR:\n", result.stderr or "[no error]")
+    print(f"🔚 Exit code: {result.returncode}")
+
+
+
 
 
 
@@ -69,9 +87,11 @@ if __name__ == "__main__":
     print("1 = Run Incentive Calculation")
     print("2 = Run 4 Week Interval-Only Report")
     print("3 = Run ISo Week-Only Report")
+    print("4 = Run ISo Week By Provider")
 
 
-    choice = input("Enter 1,2, or 3: ").strip()
+
+    choice = input("Enter 1, 2, 3, or 4: ").strip()
 
     if choice == "1":
         R_ScriptRunIncentive()
@@ -79,6 +99,8 @@ if __name__ == "__main__":
         R_Script_4Week()
     elif choice == '3':
         RScript_ISoWeek()
+    elif choice == '4':
+        RSCRIPT_ISoweek_By_Provider()
 
     else:
         print("❌ Invalid selection. Exiting.")
