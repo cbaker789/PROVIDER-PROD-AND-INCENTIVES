@@ -24,7 +24,7 @@ if __name__ == "__main__":
             print("4 = Run ISo Week By Provider")
             print("X = Exit back to main menu")
 
-            inner_choice = input("Enter 1, 2, 3, or X: ").strip().lower()
+            inner_choice = input("Enter 1, 2, 3, 4, or X: ").strip().lower()
 
             if inner_choice == "1":
                 R_ScriptRunIncentive()
