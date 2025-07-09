@@ -4,11 +4,12 @@ library(openxlsx)
 library(lubridate)
 library(readxl)
 library(stringr)
+library(ggplot2)  # Added for heatmap generation
 
 # --- Normalization Function ---
 normalize_provider <- function(name) {
-  cleaned <- str_replace_all(name, ",(\\S)", ", \\1")  # ensure space after comma
-  str_extract(cleaned, "^[^,]+,\\s[^\\s]+")             # extract "Last, First"
+  cleaned <- str_replace_all(name, ",(\\S)", ", \\1")
+  str_extract(cleaned, "^[^,]+,\\s[^\\s]+")
 }
 
 # --- Directories ---
@@ -157,34 +158,121 @@ today_label <- format(Sys.Date(), "%Y-%m-%d")
 headerStyle <- createStyle(fontSize = 11, fontColour = "white", fgFill = "#4F81BD", halign = "center", valign = "center", textDecoration = "bold", border = "Bottom")
 bodyStyle <- createStyle(halign = "center", valign = "center", wrapText = TRUE)
 
-add_styled_sheet <- function(wb, sheet_name, data) {
+add_styled_sheet <- function(wb, sheet_name, data, title_text = NULL) {
   addWorksheet(wb, sheet_name)
-  writeDataTable(wb, sheet = sheet_name, x = data, withFilter = TRUE, headerStyle = headerStyle)
-  addStyle(wb, sheet = sheet_name, style = bodyStyle, rows = 2:(nrow(data) + 1), cols = 1:ncol(data), gridExpand = TRUE)
+
+  start_row <- 1
+
+  # Add optional title
+  if (!is.null(title_text)) {
+    writeData(wb, sheet = sheet_name, x = title_text, startCol = 1, startRow = start_row)
+    mergeCells(wb, sheet = sheet_name, cols = 1:ncol(data), rows = start_row)
+    title_style <- createStyle(fontSize = 18, textDecoration = c("bold", "italic"),  halign = "left")
+    addStyle(wb, sheet = sheet_name, style = title_style, rows = start_row, cols = 1, gridExpand = TRUE)
+    start_row <- start_row + 1  # leave a blank row before table
+  }
+
+  writeDataTable(wb, sheet = sheet_name, x = data, startRow = start_row, withFilter = TRUE, headerStyle = headerStyle)
+  addStyle(wb, sheet = sheet_name, style = bodyStyle, rows = (start_row + 1):(start_row + nrow(data)), cols = 1:ncol(data), gridExpand = TRUE)
   freezePane(wb, sheet = sheet_name, firstRow = TRUE)
   setColWidths(wb, sheet = sheet_name, cols = 1:ncol(data), widths = "auto")
 }
+
 
 for (norm in normalized_providers) {
   prov_safe <- str_replace_all(norm, "[^[:alnum:]_]", "_")
   output_file <- file.path(output_dir, paste0("Provider_Summary_", prov_safe, "_", today_label, ".xlsx"))
   wb <- createWorkbook()
 
-  data_rows <- Productivity_Summary %>% filter(Normalized == norm)
+  data_rows <- Productivity_Summary %>% filter(Normalized == norm) %>%
+    arrange(desc(`Provider`))
   appt_rows <- Kept_Appt_Pivot %>% filter(normalize_provider(Provider) == norm)
   nonex_rows <- Non_Exempt_Pivot %>% filter(normalize_provider(Provider) == norm)
   ex_rows <- Exempt_Pivot %>% filter(normalize_provider(Provider) == norm)
-  summary_rows <- ProviderSummary %>% filter(Normalized == norm)
+  provider_target <- Specialty_Data %>% filter(Normalized == norm) %>% pull(`Productivity Target?`) %>% unique() %>% first()
+  # Generate title for "Data" sheet
+  provider_name <- unique(data_rows$Provider)[1]
+  min_date <- format(min(IsoWeekMapping$Min_Date, na.rm = TRUE), "%Y-%m-%d")
+  max_date <- format(max(IsoWeekMapping$Max_Date, na.rm = TRUE), "%Y-%m-%d")
+  title_text <- paste0("Provider Productivity: ", provider_name, " (", norm, ") — Dates ", min_date, " to ", max_date)
 
-  # --- Add Data Sheet with Highlighting ---
-  addWorksheet(wb, "Data")
-  writeDataTable(wb, "Data", data_rows, withFilter = TRUE, headerStyle = headerStyle)
-  addStyle(wb, "Data", bodyStyle, rows = 2:(nrow(data_rows) + 1), cols = 1:ncol(data_rows), gridExpand = TRUE)
-  freezePane(wb, "Data", firstRow = TRUE)
-  setColWidths(wb, "Data", cols = 1:ncol(data_rows), widths = "auto")
+  add_styled_sheet(wb, "Data", data_rows, title_text = title_text)
+  add_styled_sheet(wb, "Kept Appointments", appt_rows)
+  add_styled_sheet(wb, "Non-Exemption Time", nonex_rows)
+  add_styled_sheet(wb, "Exemption Time", ex_rows)
+
+  # --- Add Heatmap Plot Sheet ---
+  # Create complete grid of all weeks for this provider# Map ISO week labels first
+  # Step 1: Join week labels to Final_Pivot first (ensure it's ready)# Step 1: Label data with week ranges
+  provider_label_data <- Final_Pivot %>%
+    filter(Normalized == norm) %>%
+    left_join(IsoWeekMapping, by = "ISoweek_start_date") %>%
+    mutate(Iso_Week_Label = factor(Iso_Week_Label, levels = week_label_order))
+
+  # Step 2: Create scaffold of all (Normalized × Week)
+  provider_weeks <- expand.grid(
+    Iso_Week_Label = factor(week_label_order, levels = week_label_order),
+    Normalized = norm,
+    stringsAsFactors = FALSE
+  )
+
+  # Step 3: Join scaffold with real data and filter to keep real Providers
+  plot_data <- provider_weeks %>%
+    left_join(provider_label_data, by = c("Normalized", "Iso_Week_Label")) %>%
+    mutate(
+      `Average Productivity` = ifelse(is.na(`Total Productivity`), NA, `Total Productivity`),
+      Productivity_Level = case_when(
+        is.na(`Average Productivity`) ~ "NA",
+        `Average Productivity` < provider_target ~ "Low",
+        TRUE ~ "High"
+      ),
+      Provider = coalesce(Provider, unique(data_rows$Provider)[1])  # Ensure Provider field is filled for NA rows
+    ) %>%
+    select(Provider, Iso_Week_Label, `Average Productivity`, Productivity_Level)
+
+
+
+
+  if (nrow(plot_data) > 0) {
+    plot <- ggplot(plot_data, aes(x = Iso_Week_Label, y = Provider, fill = Productivity_Level)) +
+      geom_tile(color = "white", linewidth = 0.6) +
+      geom_text(
+        aes(label = ifelse(is.na(`Average Productivity`), "", sprintf("%.2f", `Average Productivity`))),
+        color = "black",
+        size = 4,
+        fontface = 'bold'
+      ) +
+      scale_fill_manual(
+        values = c("Low" = "#f44336", "High" = "#81c784", "NA" = "white"),
+        name = "Productivity Level"
+      ) +
+      labs(
+        title = paste0("Heatmap: Avg Productivity vs Target (", provider_target, ")"),
+        x = "Week Range",
+        y = NULL
+      ) +
+      theme_light(base_size = 13) +
+      theme(
+        axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+        axis.text.y = element_text(size = 10),
+        plot.title = element_text(size = 14, face = "bold"),
+        axis.title.x = element_text(size = 12),
+        legend.position = "bottom",
+        legend.title = element_text(size = 10),
+        legend.text = element_text(size = 10),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()
+      )
+
+    plot_file <- tempfile(fileext = ".png")
+    ggsave(plot_file, plot, width = 12, height = 5, dpi = 300)
+    insertImage(wb, "Data", file = plot_file, startRow = 10, startCol = 1, width = 15, height = 5, units = "in")
+  }
+
+
 
   for (i in 1:nrow(data_rows)) {
-    row_idx <- i + 1
+    row_idx <- i + 2
     target <- data_rows$`Productivity Target?`[i]
     if (length(target) == 1 && !is.na(target)) {
       # Highlight weekly columns
@@ -213,11 +301,7 @@ for (norm in normalized_providers) {
   }
 
 
-  add_styled_sheet(wb, "Kept Appointments", appt_rows)
-  add_styled_sheet(wb, "Non-Exemption Time", nonex_rows)
-  add_styled_sheet(wb, "Exemption Time", ex_rows)
-  add_styled_sheet(wb, "4-Week Summary", summary_rows)
 
   saveWorkbook(wb, file = output_file, overwrite = TRUE)
-  cat("??? Exported:", output_file, "\n")
+  cat("✅ Exported:", output_file, "\n")
 }
