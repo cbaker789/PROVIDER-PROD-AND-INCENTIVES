@@ -121,22 +121,30 @@ Exemption_Summary <- Final_Pivot_Labeled %>%
   select(Provider, all_of(week_label_order))
 
 # --- 4-Week Aggregated Summary ---
-ProviderSummary <- Final_Pivot %>%
-  mutate(Four_Week_Group = ((ISoweek_start_date - 1) %/% 4) + 1) %>%
-  group_by(Provider, Four_Week_Group) %>%
+ProviderSummary <- Final_Pivot_Labeled %>%
+  # keep a consistent label order in the output
+  mutate(Iso_Week_Label = factor(Iso_Week_Label, levels = week_label_order)) %>%
+  group_by(Provider, ISoweek_start_date, Iso_Week_Label) %>%
   summarise(
-    `Total Kept Appointments` = if (all(is.na(`Total Number of Kept Appointments`))) NA else sum(`Total Number of Kept Appointments`, na.rm = TRUE),
-    `Total Non-Exempt Hours On Schedule` = if (all(is.na(`Total Non-Exempt Hours On Schedule`))) NA else sum(`Total Non-Exempt Hours On Schedule`, na.rm = TRUE),
-    `Total Exempt Hours on Schedule` = if (all(is.na(`Total Exempt Hours on Schedule`))) NA else sum(`Total Exempt Hours on Schedule`, na.rm = TRUE),
-    `Average Productivity` = if (
-      all(is.na(`Total Number of Kept Appointments`)) | all(is.na(`Total Non-Exempt Hours On Schedule`)) | sum(`Total Non-Exempt Hours On Schedule`, na.rm = TRUE) == 0
-    ) NA else round(
-      sum(`Total Number of Kept Appointments`, na.rm = TRUE) /
-        sum(`Total Non-Exempt Hours On Schedule`, na.rm = TRUE), 2
-    ),
+    `Total Kept Appointments` = if (all(is.na(`Total Number of Kept Appointments`))) NA_integer_
+    else sum(`Total Number of Kept Appointments`, na.rm = TRUE),
+    `Total Non-Exempt Hours On Schedule` = if (all(is.na(`Total Non-Exempt Hours On Schedule`))) NA_real_
+    else round(sum(`Total Non-Exempt Hours On Schedule`, na.rm = TRUE), 2),
+    `Total Exempt Hours on Schedule` = if (all(is.na(`Total Exempt Hours on Schedule`))) NA_real_
+    else round(sum(`Total Exempt Hours on Schedule`, na.rm = TRUE), 2),
+    `Average Productivity` =
+      if (
+        all(is.na(`Total Number of Kept Appointments`)) |
+        all(is.na(`Total Non-Exempt Hours On Schedule`)) |
+        sum(`Total Non-Exempt Hours On Schedule`, na.rm = TRUE) == 0
+      ) NA_real_ else round(
+        sum(`Total Number of Kept Appointments`, na.rm = TRUE) /
+          sum(`Total Non-Exempt Hours On Schedule`, na.rm = TRUE), 2
+      ),
     .groups = "drop"
   ) %>%
-  full_join(Specialty_Data, by = "Provider")
+  left_join(Specialty_Data, by = "Provider") %>%
+  arrange(Provider, ISoweek_start_date)
 
 # --- Save Workbook ---
 output_file <- file.path(output_dir, paste0("ISO_Week_Provider_Summary_", format(Sys.Date(), "%Y-%m-%d"), ".xlsx"))
