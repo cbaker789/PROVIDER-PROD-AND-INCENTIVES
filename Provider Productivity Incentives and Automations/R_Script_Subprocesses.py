@@ -93,7 +93,7 @@ def R_ScriptRunIncentive():
     pay_period = prompt_pay_period_date()
     r_exe = detect_rscript()
     print(f"🕵️ Detected Rscript: {r_exe}")
-    r_script_path = r"\\SBNC-file1\users\calvin.baker_SBNC\Documents\R Scripts\Prov Prod\Auto_R_Filtering\Incentive_Calc.R"
+    r_script_path = r"C:\Users\calvin.baker_SBNC\PycharmProjects\Provider Productivity and  Incentives Automations\Provider Productivity Incentives and Automations\Example R Scripts\Incentive_Calc.R"
 
     print("▶️ Running Incentive R script with date:", pay_period)
     result = subprocess.run(
@@ -110,7 +110,7 @@ def R_ScriptRunIncentive():
 def R_Script_4Week():
     r_exe = detect_rscript()
     print(f"🕵️ Detected Rscript: {r_exe}")
-    r_script_path = r"\\SBNC-file1\users\calvin.baker_SBNC\Documents\R Scripts\Prov Prod\Auto_R_Filtering\Run_4Week.R"
+    r_script_path = r"C:\Users\calvin.baker_SBNC\PycharmProjects\Provider Productivity and  Incentives Automations\Provider Productivity Incentives and Automations\Example R Scripts\Run_4Week.R"
 
     print("▶️ Running Summary-Only R script...")
     result = subprocess.run(
@@ -127,7 +127,7 @@ def R_Script_4Week():
 def RScript_ISoWeek():
     r_exe = detect_rscript()
     print(f"🕵️ Detected Rscript: {r_exe}")
-    r_script_path = r"\\SBNC-file1\users\calvin.baker_SBNC\Documents\R Scripts\Prov Prod\Auto_R_Filtering\Run_IsoWeek.R"
+    r_script_path = r"C:\Users\calvin.baker_SBNC\PycharmProjects\Provider Productivity and  Incentives Automations\Provider Productivity Incentives and Automations\Example R Scripts\Run_IsoWeek.R"
 
     print("▶️ Running Summary-Only R script...")
     result = subprocess.run(
@@ -145,7 +145,7 @@ def RScript_ISoWeek():
 def RSCRIPT_ISoweek_By_Provider():
     r_exe = detect_rscript()
     print(f"🕵️ Detected Rscript: {r_exe}")
-    r_script_path = r"\\SBNC-file1\users\calvin.baker_SBNC\Documents\R Scripts\Prov Prod\Auto_R_Filtering\ISO_Week_Split_By_Provider.R"
+    r_script_path = r"C:\Users\calvin.baker_SBNC\PycharmProjects\Provider Productivity and  Incentives Automations\Provider Productivity Incentives and Automations\Example R Scripts\Run_ISO_Week_By_Provider"
 
     print("▶️ Running Summary-Only R script...")
     result = subprocess.run(

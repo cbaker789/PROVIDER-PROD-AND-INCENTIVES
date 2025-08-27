@@ -1,19 +1,50 @@
+# ============================
+# Provider ISO-Week Workbooks + Normalized Index with Emails & File Links
+# ============================
+
 # --- Libraries ---
 library(tidyverse)
 library(openxlsx)
 library(lubridate)
 library(readxl)
 library(stringr)
-library(ggplot2)  # Added for heatmap generation
+library(ggplot2)  # for heatmap
 
-# --- Normalization Function ---
+# --- Helpers ---
 normalize_provider <- function(name) {
   cleaned <- str_replace_all(name, ",(\\S)", ", \\1")
   str_extract(cleaned, "^[^,]+,\\s[^\\s]+")
 }
 
+# Use the same cleaning everywhere (trim spaces + trailing commas)
+clean_norm <- function(x) stringr::str_squish(stringr::str_remove(x, ",+$"))
+
+# Generate first.last@sbclinics.org from "Last, First" (handles accents, spaces, punctuation)
+make_sbnc_email <- function(normalized_vec) {
+  nm <- normalized_vec %>%
+    stringr::str_squish() %>%
+    stringr::str_remove(",+$")
+
+  first <- stringr::str_trim(stringr::str_extract(nm, "(?<=,\\s).*"))
+  last  <- stringr::str_trim(stringr::str_extract(nm, "^[^,]+"))
+
+  # Transliterate accents to ASCII if possible
+  first <- iconv(first, from = "UTF-8", to = "ASCII//TRANSLIT")
+  last  <- iconv(last,  from = "UTF-8", to = "ASCII//TRANSLIT")
+
+  sanitize <- function(x) {
+    x <- stringr::str_to_lower(x)
+    x <- stringr::str_replace_all(x, "[^a-z]+", ".")  # non-letters -> dot
+    x <- stringr::str_replace_all(x, "\\.+", ".")     # collapse multiple dots
+    x <- stringr::str_replace_all(x, "^\\.|\\.$", "") # trim edge dots
+    x
+  }
+
+  paste0(sanitize(first), ".", sanitize(last), "@sbclinics.org")
+}
+
 # --- Directories ---
-input_dir <- "C:/Reports/Provider Prod Data Pulls"
+input_dir  <- "C:/Reports/Provider Prod Data Pulls"
 output_dir <- file.path(input_dir, "Filtered/By ISO Week/By Provider")
 if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
 
@@ -29,39 +60,43 @@ cat("   - Productivity:", prod_file, "\n")
 cat("   - Appointments:", appt_file, "\n")
 cat("   - Specialty:", specialty_file, "\n")
 
+stopifnot(!is.na(prod_file), file.exists(prod_file))
+stopifnot(!is.na(appt_file), file.exists(appt_file))
+stopifnot(!is.na(specialty_file), file.exists(specialty_file))
+
 # --- Load Data ---
 Prod_Raw <- read_excel(prod_file)
 Appt_Raw <- read_excel(appt_file)
 Specialty_Data <- read_excel(specialty_file) %>%
   select(Provider, `Provider Specialty`, `Productivity Target?`) %>%
-  mutate(Normalized = normalize_provider(Provider))
+  mutate(Normalized = clean_norm(normalize_provider(Provider)))
 
 # --- Clean Productivity ---
 Prod_Cleaned <- Prod_Raw %>%
   mutate(
     ISoweek_start_date = isoweek(ymd(week_end_date)),
-    Normalized = normalize_provider(Provider)
+    Normalized = clean_norm(normalize_provider(Provider))
   )
 
-Charting_Time <- Prod_Cleaned %>% filter(category == "Charting Time")
-Exempt_Time <- Prod_Cleaned %>% filter(`Prevent Appointments?` == "Y" & !category %in% c("Charting Time", "Administrative Time"))
+Charting_Time   <- Prod_Cleaned %>% filter(category == "Charting Time")
+Exempt_Time     <- Prod_Cleaned %>% filter(`Prevent Appointments?` == "Y" & !category %in% c("Charting Time", "Administrative Time"))
 Non_Exempt_Time <- Prod_Cleaned %>% filter(`Prevent Appointments?` == "N")
 Bound_NonExempt <- bind_rows(Non_Exempt_Time, Charting_Time)
 
 Non_Exemption_Summary <- Bound_NonExempt %>%
   group_by(ISoweek_start_date, Provider, Normalized) %>%
   summarise(
-    `Total Non Exemption Time (Mins)` = round(sum(duration), 2),
+    `Total Non Exemption Time (Mins)`    = round(sum(duration), 2),
     `Total Non-Exempt Hours On Schedule` = round(sum(duration)/60, 2),
     week_start_date = first(week_start_date),
-    week_end_date = first(week_end_date),
+    week_end_date   = first(week_end_date),
     .groups = "drop"
   )
 
 Exemption_Summary <- Exempt_Time %>%
   group_by(ISoweek_start_date, Provider, Normalized) %>%
   summarise(
-    `Total Exemption Time` = sum(duration),
+    `Total Exemption Time`           = sum(duration),
     `Total Exempt Hours on Schedule` = round(sum(duration) / 60, 2),
     .groups = "drop"
   )
@@ -70,7 +105,7 @@ Exemption_Summary <- Exempt_Time %>%
 Appt_Raw <- Appt_Raw %>%
   mutate(
     Provider = `Res Name`,
-    Normalized = normalize_provider(Provider),
+    Normalized = clean_norm(normalize_provider(Provider)),
     Appt_Date = ymd(`Appt Dt`),
     ISoweek_start_date = isoweek(Appt_Date)
   )
@@ -82,9 +117,12 @@ Kept_Appt_Summary <- Appt_Raw %>%
 # --- Merge All ---
 Final_Pivot <- Non_Exemption_Summary %>%
   full_join(Kept_Appt_Summary, by = c("Provider", "Normalized", "ISoweek_start_date")) %>%
-  full_join(Exemption_Summary, by = c("Provider", "Normalized", "ISoweek_start_date")) %>%
+  full_join(Exemption_Summary,   by = c("Provider", "Normalized", "ISoweek_start_date")) %>%
   mutate(`Total Productivity` = round(`Total Number of Kept Appointments` / `Total Non-Exempt Hours On Schedule`, 2)) %>%
   distinct(Provider, ISoweek_start_date, .keep_all = TRUE)
+
+# Guard against division by zero -> Inf
+Final_Pivot$`Total Productivity`[is.infinite(Final_Pivot$`Total Productivity`)] <- NA_real_
 
 # --- ISO Week Labels ---
 IsoWeekMapping <- Final_Pivot %>%
@@ -92,7 +130,7 @@ IsoWeekMapping <- Final_Pivot %>%
   group_by(ISoweek_start_date) %>%
   summarise(
     Min_Date = min(ymd(week_start_date), na.rm = TRUE),
-    Max_Date = max(ymd(week_end_date), na.rm = TRUE),
+    Max_Date = max(ymd(week_end_date),   na.rm = TRUE),
     .groups = "drop"
   ) %>%
   mutate(Iso_Week_Label = paste0(format(Min_Date, "%Y-%m-%d"), " to ", format(Max_Date, "%Y-%m-%d")))
@@ -114,36 +152,35 @@ Productivity_Summary <- Final_Pivot_Labeled %>%
   ungroup() %>%
   pivot_wider(names_from = Iso_Week_Label, values_from = `Total Productivity`) %>%
   left_join(Specialty_Data, by = c("Provider", "Normalized")) %>%
-  select(-`NA`) %>%
   arrange(Provider) %>%
   relocate(`Provider Specialty`, .after = Provider)
 
 Kept_Appt_Pivot <- Final_Pivot_Labeled %>%
   select(Provider, Iso_Week_Label, `Total Number of Kept Appointments`) %>%
   pivot_wider(names_from = Iso_Week_Label, values_from = `Total Number of Kept Appointments`, values_fill = 0) %>%
-  select(Provider, all_of(c("Provider", week_label_order)))
+  select(Provider, all_of(week_label_order))
 
 Non_Exempt_Pivot <- Final_Pivot_Labeled %>%
   select(Provider, Iso_Week_Label, `Total Non-Exempt Hours On Schedule`) %>%
   pivot_wider(names_from = Iso_Week_Label, values_from = `Total Non-Exempt Hours On Schedule`, values_fill = 0) %>%
-  select(Provider, all_of(c("Provider", week_label_order)))
+  select(Provider, all_of(week_label_order))
 
 Exempt_Pivot <- Final_Pivot_Labeled %>%
   select(Provider, Iso_Week_Label, `Total Exempt Hours on Schedule`) %>%
   pivot_wider(names_from = Iso_Week_Label, values_from = `Total Exempt Hours on Schedule`, values_fill = 0) %>%
-  select(Provider, all_of(c("Provider", week_label_order)))
+  select(Provider, all_of(week_label_order))
 
-# --- 4-Week Summary ---
+# --- 4-Week Summary (kept for future use) ---
 ProviderSummary <- Final_Pivot %>%
   mutate(Four_Week_Group = ((ISoweek_start_date - 1) %/% 4) + 1) %>%
   group_by(Provider, Normalized, Four_Week_Group) %>%
   summarise(
-    `Total Kept Appointments` = sum(`Total Number of Kept Appointments`, na.rm = TRUE),
+    `Total Kept Appointments`            = sum(`Total Number of Kept Appointments`, na.rm = TRUE),
     `Total Non-Exempt Hours On Schedule` = sum(`Total Non-Exempt Hours On Schedule`, na.rm = TRUE),
-    `Total Exempt Hours on Schedule` = sum(`Total Exempt Hours on Schedule`, na.rm = TRUE),
+    `Total Exempt Hours on Schedule`     = sum(`Total Exempt Hours on Schedule`,    na.rm = TRUE),
     `Average Productivity` = ifelse(
       sum(`Total Non-Exempt Hours On Schedule`, na.rm = TRUE) == 0,
-      NA,
+      NA_real_,
       round(sum(`Total Number of Kept Appointments`, na.rm = TRUE) /
               sum(`Total Non-Exempt Hours On Schedule`, na.rm = TRUE), 2)
     ),
@@ -152,105 +189,105 @@ ProviderSummary <- Final_Pivot %>%
   left_join(Specialty_Data, by = c("Provider", "Normalized"))
 
 # --- Workbook Export ---
-normalized_providers <- sort(unique(Final_Pivot$Normalized))
 today_label <- format(Sys.Date(), "%Y-%m-%d")
 
-headerStyle <- createStyle(fontSize = 11, fontColour = "white", fgFill = "#4F81BD", halign = "center", valign = "center", textDecoration = "bold", border = "Bottom")
+headerStyle <- createStyle(
+  fontSize = 11, fontColour = "white", fgFill = "#4F81BD",
+  halign = "center", valign = "center", textDecoration = "bold", border = "Bottom"
+)
 bodyStyle <- createStyle(halign = "center", valign = "center", wrapText = TRUE)
 
 add_styled_sheet <- function(wb, sheet_name, data, title_text = NULL) {
   addWorksheet(wb, sheet_name)
-
   start_row <- 1
 
-  # Add optional title
   if (!is.null(title_text)) {
     writeData(wb, sheet = sheet_name, x = title_text, startCol = 1, startRow = start_row)
-    mergeCells(wb, sheet = sheet_name, cols = 1:ncol(data), rows = start_row)
+    mergeCells(wb, sheet = sheet_name, cols = 1:max(1, ncol(data)), rows = start_row)
     title_style <- createStyle(fontSize = 18, textDecoration = c("bold", "italic"),  halign = "left")
     addStyle(wb, sheet = sheet_name, style = title_style, rows = start_row, cols = 1, gridExpand = TRUE)
-    start_row <- start_row + 1  # leave a blank row before table
+    start_row <- start_row + 1
   }
 
   writeDataTable(wb, sheet = sheet_name, x = data, startRow = start_row, withFilter = TRUE, headerStyle = headerStyle)
-  addStyle(wb, sheet = sheet_name, style = bodyStyle, rows = (start_row + 1):(start_row + nrow(data)), cols = 1:ncol(data), gridExpand = TRUE)
+  if (nrow(data) > 0 && ncol(data) > 0) {
+    addStyle(wb, sheet = sheet_name, style = bodyStyle,
+             rows = (start_row + 1):(start_row + nrow(data)),
+             cols = 1:ncol(data), gridExpand = TRUE)
+  }
   freezePane(wb, sheet = sheet_name, firstRow = TRUE)
-  setColWidths(wb, sheet = sheet_name, cols = 1:ncol(data), widths = "auto")
+  setColWidths(wb, sheet = sheet_name, cols = 1:max(1, ncol(data)), widths = "auto")
 }
 
+# Clean + list of normalized providers used for filenames and filtering
+normalized_providers <- Final_Pivot %>%
+  mutate(Normalized = clean_norm(Normalized)) %>%
+  pull(Normalized) %>%
+  unique() %>%
+  sort()
 
+# --- Per-Provider Workbooks ---
 for (norm in normalized_providers) {
-  prov_safe <- str_replace_all(norm, "[^[:alnum:]_]", "_")
+  norm_clean <- clean_norm(norm)
+  prov_safe  <- str_replace_all(norm_clean, "[^[:alnum:]_]", "_")
   output_file <- file.path(output_dir, paste0("Provider_Summary_", prov_safe, "_", today_label, ".xlsx"))
   wb <- createWorkbook()
 
-  data_rows <- Productivity_Summary %>% filter(Normalized == norm) %>%
-    arrange(desc(`Provider`))
-  appt_rows <- Kept_Appt_Pivot %>% filter(normalize_provider(Provider) == norm)
-  nonex_rows <- Non_Exempt_Pivot %>% filter(normalize_provider(Provider) == norm)
-  ex_rows <- Exempt_Pivot %>% filter(normalize_provider(Provider) == norm)
-  provider_target <- Specialty_Data %>% filter(Normalized == norm) %>% pull(`Productivity Target?`) %>% unique() %>% first()
-  # Generate title for "Data" sheet
-  provider_name <- unique(data_rows$Provider)[1]
+  data_rows  <- Productivity_Summary %>% filter(Normalized == norm_clean) %>% arrange(desc(`Provider`))
+  appt_rows  <- Kept_Appt_Pivot     %>% filter(clean_norm(normalize_provider(Provider)) == norm_clean)
+  nonex_rows <- Non_Exempt_Pivot    %>% filter(clean_norm(normalize_provider(Provider)) == norm_clean)
+  ex_rows    <- Exempt_Pivot        %>% filter(clean_norm(normalize_provider(Provider)) == norm_clean)
+
+  provider_target <- Specialty_Data %>%
+    filter(Normalized == norm_clean) %>%
+    pull(`Productivity Target?`) %>%
+    unique() %>% first()
+  provider_target_num <- suppressWarnings(as.numeric(provider_target))
+
+  provider_name <- if (nrow(data_rows) > 0) unique(data_rows$Provider)[1] else norm_clean
   min_date <- format(min(IsoWeekMapping$Min_Date, na.rm = TRUE), "%Y-%m-%d")
   max_date <- format(max(IsoWeekMapping$Max_Date, na.rm = TRUE), "%Y-%m-%d")
-  title_text <- paste0("Provider Productivity: ", provider_name, " (", norm, ") — Dates ", min_date, " to ", max_date)
+  title_text <- paste0("Provider Productivity: ", norm_clean, " - Dates ", min_date, " to ", max_date)
 
-  add_styled_sheet(wb, "Data", data_rows, title_text = title_text)
-  add_styled_sheet(wb, "Kept Appointments", appt_rows)
+  add_styled_sheet(wb, "Data",               data_rows, title_text = title_text)
+  add_styled_sheet(wb, "Kept Appointments",  appt_rows)
   add_styled_sheet(wb, "Non-Exemption Time", nonex_rows)
-  add_styled_sheet(wb, "Exemption Time", ex_rows)
+  add_styled_sheet(wb, "Exemption Time",     ex_rows)
 
-  # --- Add Heatmap Plot Sheet ---
-  # Create complete grid of all weeks for this provider# Map ISO week labels first
-  # Step 1: Join week labels to Final_Pivot first (ensure it's ready)# Step 1: Label data with week ranges
+  # Heatmap (inserted into Data sheet)
   provider_label_data <- Final_Pivot %>%
-    filter(Normalized == norm) %>%
+    filter(Normalized == norm_clean) %>%
     left_join(IsoWeekMapping, by = "ISoweek_start_date") %>%
     mutate(Iso_Week_Label = factor(Iso_Week_Label, levels = week_label_order))
 
-  # Step 2: Create scaffold of all (Normalized × Week)
   provider_weeks <- expand.grid(
     Iso_Week_Label = factor(week_label_order, levels = week_label_order),
-    Normalized = norm,
+    Normalized = norm_clean,
     stringsAsFactors = FALSE
   )
 
-  # Step 3: Join scaffold with real data and filter to keep real Providers
   plot_data <- provider_weeks %>%
     left_join(provider_label_data, by = c("Normalized", "Iso_Week_Label")) %>%
     mutate(
-      `Average Productivity` = ifelse(is.na(`Total Productivity`), NA, `Total Productivity`),
-      Productivity_Level = case_when(
+      `Average Productivity` = ifelse(is.na(`Total Productivity`), NA_real_, `Total Productivity`),
+      Productivity_Level = dplyr::case_when(
         is.na(`Average Productivity`) ~ "NA",
-        `Average Productivity` < provider_target ~ "Low",
+        !is.na(provider_target_num) & `Average Productivity` < provider_target_num ~ "Low",
         TRUE ~ "High"
       ),
-      Provider = coalesce(Provider, unique(data_rows$Provider)[1])  # Ensure Provider field is filled for NA rows
+      Provider = coalesce(Provider, provider_name)
     ) %>%
     select(Provider, Iso_Week_Label, `Average Productivity`, Productivity_Level)
-
-
-
 
   if (nrow(plot_data) > 0) {
     plot <- ggplot(plot_data, aes(x = Iso_Week_Label, y = Provider, fill = Productivity_Level)) +
       geom_tile(color = "white", linewidth = 0.6) +
-      geom_text(
-        aes(label = ifelse(is.na(`Average Productivity`), "", sprintf("%.2f", `Average Productivity`))),
-        color = "black",
-        size = 4,
-        fontface = 'bold'
-      ) +
-      scale_fill_manual(
-        values = c("Low" = "#f44336", "High" = "#81c784", "NA" = "white"),
-        name = "Productivity Level"
-      ) +
-      labs(
-        title = paste0("Heatmap: Avg Productivity vs Target (", provider_target, ")"),
-        x = "Week Range",
-        y = NULL
-      ) +
+      geom_text(aes(label = ifelse(is.na(`Average Productivity`), "", sprintf("%.2f", `Average Productivity`))),
+                color = "black", size = 4, fontface = 'bold') +
+      scale_fill_manual(values = c("Low" = "#f44336", "High" = "#81c784", "NA" = "white"),
+                        name = "Productivity Level") +
+      labs(title = paste0("Heatmap: Avg Productivity vs Target (", provider_target, ")"),
+           x = "Week Range", y = NULL) +
       theme_light(base_size = 13) +
       theme(
         axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
@@ -269,39 +306,124 @@ for (norm in normalized_providers) {
     insertImage(wb, "Data", file = plot_file, startRow = 10, startCol = 1, width = 15, height = 5, units = "in")
   }
 
-
-
-  for (i in 1:nrow(data_rows)) {
-    row_idx <- i + 2
-    target <- data_rows$`Productivity Target?`[i]
-    if (length(target) == 1 && !is.na(target)) {
-      # Highlight weekly columns
-      for (j in which(names(data_rows) %in% week_label_order)) {
-        conditionalFormatting(
-          wb, sheet = "Data",
-          cols = j,
-          rows = row_idx,
-          rule = paste0(">= ", target),
-          style = createStyle(bgFill = "#C6EFCE", fontColour = "#006100")
-        )
-      }
-
-      # Highlight the "Average Productivity Over Time Period" column
-      avg_col <- which(names(data_rows) == "Average Productivity Over Time Period")
-      if (length(avg_col) == 1) {
-        conditionalFormatting(
-          wb, sheet = "Data",
-          cols = avg_col,
-          rows = row_idx,
-          rule = paste0(">= ", target),
-          style = createStyle(bgFill = "#C6EFCE", fontColour = "#006100")
-        )
+  # Conditional formatting on Data sheet (weekly columns + average col) vs target
+  if (nrow(data_rows) > 0) {
+    for (i in seq_len(nrow(data_rows))) {
+      row_idx <- i + 2
+      target <- data_rows$`Productivity Target?`[i]
+      if (length(target) == 1 && !is.na(target)) {
+        for (j in which(names(data_rows) %in% week_label_order)) {
+          conditionalFormatting(
+            wb, sheet = "Data",
+            cols = j, rows = row_idx,
+            rule = paste0(">= ", target),
+            style = createStyle(bgFill = "#C6EFCE", fontColour = "#006100")
+          )
+        }
+        avg_col <- which(names(data_rows) == "Average Productivity Over Time Period")
+        if (length(avg_col) == 1) {
+          conditionalFormatting(
+            wb, sheet = "Data",
+            cols = avg_col, rows = row_idx,
+            rule = paste0(">= ", target),
+            style = createStyle(bgFill = "#C6EFCE", fontColour = "#006100")
+          )
+        }
       }
     }
   }
 
-
-
   saveWorkbook(wb, file = output_file, overwrite = TRUE)
-  cat("✅ Exported:", output_file, "\n")
+  cat("??? Exported:", output_file, "\n")
 }
+
+# ============================
+# Normalized Provider Name List (with SBNC_Email & Provider File Link)
+# ============================
+
+# Clean & dedupe normalized names (fix trailing commas/spaces)
+Normalized_List <- Final_Pivot %>%
+  distinct(Normalized) %>%
+  mutate(Normalized = clean_norm(Normalized)) %>%
+  filter(!is.na(Normalized), nzchar(Normalized)) %>%
+  arrange(Normalized)
+
+# Optional context columns
+provider_variants <- Final_Pivot_Labeled %>%
+  mutate(Normalized = clean_norm(Normalized)) %>%
+  distinct(Normalized, Provider) %>%
+  filter(!is.na(Normalized), !is.na(Provider)) %>%
+  group_by(Normalized) %>%
+  summarise(`Provider Variants` = paste(sort(unique(Provider)), collapse = " | "), .groups = "drop")
+
+spec_target <- Specialty_Data %>%
+  mutate(Normalized = clean_norm(Normalized)) %>%
+  filter(!is.na(Normalized)) %>%
+  group_by(Normalized) %>%
+  summarise(
+    `Provider Specialty`   = paste(sort(unique(`Provider Specialty`[!is.na(`Provider Specialty`)])), collapse = " | "),
+    `Productivity Target?` = paste(sort(unique(`Productivity Target?`[!is.na(`Productivity Target?`)])), collapse = " | "),
+    .groups = "drop"
+  )
+
+# Build enriched list + email + provider file link
+Normalized_List_Enriched <- Normalized_List %>%
+  left_join(spec_target,       by = "Normalized") %>%
+  left_join(provider_variants, by = "Normalized") %>%
+  mutate(
+    SBNC_Email = make_sbnc_email(Normalized),
+    Normalized_Clean = clean_norm(Normalized),
+    prov_safe = stringr::str_replace_all(Normalized_Clean, "[^[:alnum:]_]", "_"),
+    Provider_File_Path = file.path(output_dir, paste0("Provider_Summary_", prov_safe, "_", today_label, ".xlsx")),
+    Provider_File_Exists = file.exists(Provider_File_Path),
+    `Provider File (Open)` = paste0('HYPERLINK("', Provider_File_Path, '","Open")')
+  ) %>%
+  select(-prov_safe)
+
+# Styles (safety if not defined)
+if (!exists("headerStyle")) headerStyle <- createStyle(
+  fontSize = 11, fontColour = "white", fgFill = "#4F81BD",
+  halign = "center", valign = "center", textDecoration = "bold", border = "Bottom"
+)
+if (!exists("bodyStyle")) bodyStyle <- createStyle(halign = "left", valign = "center", wrapText = TRUE)
+
+# Write normalized index workbook
+norm_wb <- createWorkbook()
+addWorksheet(norm_wb, "Normalized Names")
+
+writeDataTable(
+  norm_wb, "Normalized Names",
+  Normalized_List_Enriched,
+  withFilter = TRUE,
+  headerStyle = headerStyle
+)
+
+# Convert the provider file column to actual Excel formulas (clickable link)
+link_col <- which(names(Normalized_List_Enriched) == "Provider File (Open)")
+if (length(link_col) == 1) {
+  writeFormula(
+    norm_wb, sheet = "Normalized Names",
+    x = Normalized_List_Enriched[[link_col]],
+    startCol = link_col, startRow = 2
+  )
+  hyperlink_style <- createStyle(fontColour = "#0563C1", textDecoration = "underline")
+  addStyle(
+    norm_wb, "Normalized Names", hyperlink_style,
+    rows = 2:(nrow(Normalized_List_Enriched) + 1),
+    cols = link_col, gridExpand = TRUE, stack = TRUE
+  )
+}
+
+# Body styling, widths, freeze, save
+addStyle(
+  norm_wb, "Normalized Names", bodyStyle,
+  rows = 2:(nrow(Normalized_List_Enriched) + 1),
+  cols = 1:ncol(Normalized_List_Enriched), gridExpand = TRUE
+)
+setColWidths(norm_wb, "Normalized Names", cols = 1:ncol(Normalized_List_Enriched), widths = "auto")
+freezePane(norm_wb, "Normalized Names", firstRow = TRUE)
+
+today_label <- format(Sys.Date(), "%Y-%m-%d")
+norm_file <- file.path(output_dir, paste0("Normalized_Provider_List_", today_label, ".xlsx"))
+saveWorkbook(norm_wb, norm_file, overwrite = TRUE)
+cat("??? Exported normalized provider list with emails & file links:", norm_file, "\n")
